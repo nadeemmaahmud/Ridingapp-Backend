@@ -43,8 +43,16 @@ class CustomUserManager(BaseUserManager):
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     account_type_choices = (
-        ('user', 'user'),
-        ('driver', 'driver'),
+        ('user', 'User'),
+        ('driver', 'Driver'),
+    )
+
+    payment_method_choices = (
+        ('credit_card', 'Credit Card'),
+        ('paypal', 'PayPal'),
+        ('stripe', 'Stripe'),
+        ('bank_transfer', 'Bank Transfer'),
+        ('cash', 'Cash'),
     )
 
     account_type = models.CharField(max_length=10, choices=account_type_choices, default='user')
@@ -52,11 +60,22 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, blank=True, null=True)
     phone_number = models.CharField(max_length=15, unique=True, blank=True, null=True)
     username = models.CharField(max_length=150, unique=True)
-    is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    is_completed = models.BooleanField(default=False)
+
+    is_verified = models.BooleanField(default=False)
+    otp_code = models.CharField(max_length=6, blank=True, null=True)
+    otp_created_at = models.DateTimeField(blank=True, null=True)
+
+    profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
+    id_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    payment_method = models.CharField(max_length=50, blank=True, null=True, choices=payment_method_choices)
+
+    driving_license_picture = models.ImageField(upload_to='driving_licenses/', blank=True, null=True)
+    car_picture = models.ImageField(upload_to='car_pictures/', blank=True, null=True)
+    car_name = models.CharField(max_length=100, blank=True, null=True)
+    plate_number = models.CharField(max_length=20, blank=True, null=True)
 
     objects = CustomUserManager()
 
@@ -96,3 +115,33 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def get_short_name(self):
         return self.full_name.split()[0] if self.full_name else self.username
+
+    def generate_otp(self):
+        import random
+        from django.utils import timezone
+        
+        self.otp_code = str(random.randint(100000, 999999))
+        self.otp_created_at = timezone.now()
+        self.save()
+        return self.otp_code
+
+    def verify_otp(self, otp_code):
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        if not self.otp_code or not self.otp_created_at:
+            return False
+            
+        if self.otp_code != otp_code:
+            return False
+            
+        if timezone.now() > self.otp_created_at + timedelta(minutes=5):
+            return False
+            
+        return True
+
+    def clear_otp(self):
+        self.otp_code = None
+        self.otp_created_at = None
+        self.is_verified = True
+        self.save()
