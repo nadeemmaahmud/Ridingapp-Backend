@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Deletion Confirmation - Riding App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #e74c3c;
+            border-bottom: 2px solid #e74c3c;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .deletion-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+        }
+        .content {
+            margin-bottom: 30px;
+        }
+        .account-details {
+            background-color: #fdf2f2;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid #e74c3c;
+        }
+        .important-info {
+            background-color: #fff3cd;
+            padding: 20px;
+            border-radius: 5px;
+            border-left: 4px solid #ffc107;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 12px;
+            border-top: 1px solid #ecf0f1;
+            padding-top: 20px;
+            margin-top: 30px;
+        }
+        .highlight {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .warning {
+            color: #f39c12;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="deletion-icon">🗑️</div>
+            <h1>Account Deletion Confirmed</h1>
+            <p>Your Riding App account has been deleted</p>
+        </div>
+        
+        <div class="content">
+            <p>Dear <strong>{{ user.get_full_name|default:user.username }}</strong>,</p>
+            
+            <p>This email confirms that your <span class="highlight">Riding App</span> account has been <strong>permanently deleted</strong> as requested.</p>
+            
+            <div class="account-details">
+                <h3>📋 Deleted Account Details</h3>
+                <ul>
+                    <li><strong>Account Type:</strong> {{ user.get_account_type_display }}</li>
+                    <li><strong>Email:</strong> {{ user.email }}</li>
+                    <li><strong>Deletion Date:</strong> {{ deletion_date }}</li>
+                </ul>
+            </div>
+            
+            <div class="important-info">
+                <h3>⚠️ What This Means</h3>
+                <ul>
+                    <li>Your account and all associated data have been <strong>permanently removed</strong></li>
+                    <li>You will no longer receive any communications from us</li>
+                    <li>Any active bookings or rides have been cancelled</li>
+                    <li>All payment information has been securely deleted</li>
+                    <li>Your ride history and ratings have been removed</li>
+                </ul>
+            </div>
+            
+            <p class="warning">⏰ Important Recovery Information:</p>
+            <p>If you deleted your account by mistake or have any concerns, please contact our support team within <strong>24 hours</strong>. After this period, account recovery may not be possible as all data will be permanently purged from our systems.</p>
+            
+            <p>We're sorry to see you go! If you decide to return in the future, you can always create a new account, though you'll need to start fresh with your profile and ride history.</p>
+            
+            <p>Thank you for being part of the Riding App community. We hope you had positive experiences during your time with us.</p>
+            
+            <p>Safe travels,<br>
+            <strong>The Riding App Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>If you need to contact support, please visit our website or create a new account.</p>
+            <p>© {{ current_year }} Riding App. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

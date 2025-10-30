@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to Riding App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .welcome-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+        }
+        .content {
+            margin-bottom: 30px;
+        }
+        .account-details {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .next-steps {
+            background-color: #e8f5e8;
+            padding: 20px;
+            border-radius: 5px;
+            border-left: 4px solid #27ae60;
+        }
+        .footer {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 12px;
+            border-top: 1px solid #ecf0f1;
+            padding-top: 20px;
+            margin-top: 30px;
+        }
+        .button {
+            display: inline-block;
+            background-color: #3498db;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .highlight {
+            color: #3498db;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="welcome-icon">🚗</div>
+            <h1>Welcome to Riding App!</h1>
+            <p>Your journey starts here</p>
+        </div>
+        
+        <div class="content">
+            <p>Dear <strong>{{ user.get_full_name|default:user.username }}</strong>,</p>
+            
+            <p>Welcome to <span class="highlight">Riding App</span>! We're thrilled to have you join our growing community of riders and drivers.</p>
+            
+            <p>Your account has been successfully created and you're all set to start your journey with us.</p>
+            
+            <div class="account-details">
+                <h3>📋 Account Details</h3>
+                <ul>
+                    <li><strong>Account Type:</strong> {{ user.get_account_type_display }}</li>
+                    <li><strong>Email:</strong> {{ user.email }}</li>
+                    <li><strong>Registration Date:</strong> {{ user.date_joined|date:"F d, Y \a\t g:i A" }}</li>
+                </ul>
+            </div>
+            
+            <div class="next-steps">
+                <h3>🚀 What's Next?</h3>
+                <ul>
+                    {% if user.account_type == 'driver' %}
+                    <li>Complete your profile by adding your driving license and car details</li>
+                    <li>Start offering rides and earn money</li>
+                    <li>Build your reputation with great service</li>
+                    {% else %}
+                    <li>Complete your profile with personal information</li>
+                    <li>Start booking rides for convenient travel</li>
+                    <li>Rate your experiences to help the community</li>
+                    {% endif %}
+                    <li>Explore all the features available in the app</li>
+                </ul>
+            </div>
+            
+            <p>If you have any questions or need assistance, our support team is here to help. Don't hesitate to reach out!</p>
+            
+            <p>Thank you for choosing Riding App. We're excited to be part of your travel experience!</p>
+            
+            <p>Safe travels,<br>
+            <strong>The Riding App Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>© {{ current_year }} Riding App. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

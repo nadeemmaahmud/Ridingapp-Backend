@@ -11,8 +11,9 @@ import random
 from .serializers import (
     BasicUserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
-    DriverSerializer, SendOTPSerializer, VerifyOTPSerializer,
+    DriverSerializer, SendOTPSerializer, VerifyOTPSerializer, DeleteAccountSerializer,
 )
+from .email_utils import send_welcome_email, send_deletion_confirmation_email
 
 User = get_user_model()
 
@@ -24,10 +25,29 @@ class UserRegistrationView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             
-            return Response({
+            email_status = "No email address provided"
+            if user.email:
+                try:
+                    email_sent, email_message = send_welcome_email(user)
+                    if email_sent:
+                        email_status = "Welcome email sent successfully"
+                        print(f"✅ Welcome email sent to {user.email}")
+                    else:
+                        email_status = f"Failed to send welcome email: {email_message}"
+                        print(f"❌ Failed to send welcome email: {email_message}")
+                except Exception as e:
+                    email_status = f"Exception sending welcome email: {str(e)}"
+                    print(f"💥 Exception sending welcome email: {str(e)}")
+            
+            response_data = {
                 'message': 'User registered successfully',
                 'user': BasicUserSerializer(user).data,
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            if settings.DEBUG:
+                response_data['email_status'] = email_status
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -187,11 +207,30 @@ class UserProfileView(APIView):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
+    
     def delete(self, request):
         user = self.request.user
-        user.delete()
+        user.generate_otp()
+
+        if user.email:
+            try:
+                send_mail(
+                    'Account Deletion Verification - Riding App',
+                    f'Your account deletion verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request account deletion, please ignore this email.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                return Response({
+                    'error': 'Failed to send verification OTP'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        cache.set(f'delete_user_{user.id}', True, timeout=600)
+
         return Response({
-            'message': 'User deleted successfully'
+            'message': 'Verification OTP sent. Please verify to complete account deletion.',
+            'otp_code': user.otp_code if settings.DEBUG else None
         }, status=status.HTTP_200_OK)
 
 class SendOTPView(APIView):
@@ -277,3 +316,75 @@ class VerifyOTPView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = self.request.user
+        serializer = DeleteAccountSerializer(data=request.data, context={'user': user})
+        
+        if serializer.is_valid():
+            try:
+                if user.email:
+                    try:
+                        email_sent, email_message = send_deletion_confirmation_email(user)
+                        if not email_sent:
+                            print(f"Failed to send deletion confirmation email: {email_message}")
+                    except Exception as e:
+                        print(f"Exception sending deletion confirmation email: {str(e)}")
+                
+                user.clear_otp()
+                
+                cache.delete(f'delete_user_{user.id}')
+                
+                user_id = user.id
+                user.delete()
+                
+                return Response({
+                    'message': 'Account deleted successfully'
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                return Response({
+                    'error': 'Failed to delete account. Please try again.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TestEmailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        
+        if not user.email:
+            return Response({
+                'error': 'User has no email address'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            email_sent, email_message = send_welcome_email(user)
+            
+            return Response({
+                'message': 'Test email attempt completed',
+                'email_sent': email_sent,
+                'email_message': email_message,
+                'user_email': user.email,
+                'settings_check': {
+                    'EMAIL_HOST': getattr(settings, 'EMAIL_HOST', 'Not set'),
+                    'EMAIL_PORT': getattr(settings, 'EMAIL_PORT', 'Not set'),
+                    'EMAIL_USE_TLS': getattr(settings, 'EMAIL_USE_TLS', 'Not set'),
+                    'EMAIL_HOST_USER': '***' if getattr(settings, 'EMAIL_HOST_USER', None) else 'Not set',
+                    'EMAIL_HOST_PASSWORD': '***' if getattr(settings, 'EMAIL_HOST_PASSWORD', None) else 'Not set',
+                    'DEFAULT_FROM_EMAIL': getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set'),
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Exception occurred: {str(e)}',
+                'user_email': user.email
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

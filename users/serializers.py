@@ -221,23 +221,30 @@ class VerifyOTPSerializer(serializers.Serializer):
 
         data['user'] = user
         return data
-    email_or_phone = serializers.CharField(
-        max_length=100,
-        help_text="Enter email or phone number to send OTP"
+
+class DeleteAccountSerializer(serializers.Serializer):
+    otp_code = serializers.CharField(
+        max_length=6,
+        min_length=6,
+        help_text="Enter the 6-digit OTP code sent to your email/phone"
     )
     
-    def validate_email_or_phone(self, value):
-        user = None
-        if '@' in value:
-            try:
-                user = User.objects.get(email=value)
-            except User.DoesNotExist:
-                raise serializers.ValidationError("No user found with this email address.")
-        else:
-            try:
-                user = User.objects.get(phone_number=value)
-            except User.DoesNotExist:
-                raise serializers.ValidationError("No user found with this phone number.")
-        
-        self.context['user'] = user
+    def validate_otp_code(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP must contain only digits.")
         return value
+    
+    def validate(self, data):
+        user = self.context.get('user')
+        if not user:
+            raise serializers.ValidationError("User not found.")
+        
+        otp_code = data.get('otp_code')
+        if not user.verify_otp(otp_code):
+            raise serializers.ValidationError("Invalid or expired OTP code.")
+        
+        delete_flag = cache.get(f'delete_user_{user.id}')
+        if not delete_flag:
+            raise serializers.ValidationError("Account deletion was not initiated or has expired. Please restart the process.")
+        
+        return data
