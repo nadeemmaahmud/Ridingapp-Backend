@@ -248,3 +248,166 @@ class DeleteAccountSerializer(serializers.Serializer):
             raise serializers.ValidationError("Account deletion was not initiated or has expired. Please restart the process.")
         
         return data
+
+
+class SocialAuthRegisterSerializer(serializers.Serializer):
+    account_type = serializers.ChoiceField(
+        choices=[('user', 'User'), ('driver', 'Driver')], 
+        required=False, 
+        default='user'
+    )
+    full_name = serializers.CharField(max_length=255, required=False)
+    
+    def save(self, request):
+        user = super().save(request)
+        user.account_type = self.validated_data.get('account_type', 'user')
+        user.full_name = self.validated_data.get('full_name', '')
+        user.save()
+        return user
+
+
+class GoogleLoginSerializer(serializers.Serializer):
+    access_token = serializers.CharField(required=True)
+    
+    def validate_access_token(self, access_token):
+        import requests
+        
+        try:
+            response = requests.get(
+                'https://www.googleapis.com/oauth2/v1/userinfo',
+                params={'access_token': access_token}
+            )
+            
+            if response.status_code != 200:
+                raise serializers.ValidationError("Invalid Google access token")
+                
+            user_data = response.json()
+            
+            if not user_data.get('email'):
+                raise serializers.ValidationError("Google account must have an email address")
+                
+            return access_token
+            
+        except requests.RequestException:
+            raise serializers.ValidationError("Failed to validate Google access token")
+
+
+class FacebookLoginSerializer(serializers.Serializer):
+    access_token = serializers.CharField(required=True)
+    account_type = serializers.ChoiceField(
+        choices=[('user', 'User'), ('driver', 'Driver')],
+        required=False,
+        default='user'
+    )
+    
+    def validate_access_token(self, access_token):
+        import requests
+        
+        try:
+            response = requests.get(
+                'https://graph.facebook.com/me',
+                params={
+                    'access_token': access_token,
+                    'fields': 'id,name,email,first_name,last_name'
+                }
+            )
+            
+            if response.status_code != 200:
+                raise serializers.ValidationError("Invalid Facebook access token")
+                
+            user_data = response.json()
+            
+            if 'error' in user_data:
+                raise serializers.ValidationError("Invalid Facebook access token")
+                
+            return access_token
+            
+        except requests.RequestException:
+            raise serializers.ValidationError("Failed to validate Facebook access token")
+
+
+class PhoneNumberSerializer(serializers.Serializer):
+    """Serializer for updating phone number with country code"""
+    country_code = serializers.CharField(max_length=5, required=True, help_text="Country code (e.g., +1, +91)")
+    phone_number = serializers.CharField(max_length=15, required=True, help_text="Phone number without country code")
+    
+    def validate_country_code(self, value):
+        """Validate country code format"""
+        if not value.startswith('+'):
+            raise serializers.ValidationError("Country code must start with +")
+        
+        from .country_codes import get_country_codes
+        country_codes = [country['phone_code'] for country in get_country_codes()]
+        
+        if value not in country_codes:
+            raise serializers.ValidationError("Invalid country code")
+        
+        return value
+    
+    def validate_phone_number(self, value):
+        """Validate phone number"""
+        import re
+        # Remove any non-digit characters
+        clean_number = re.sub(r'[^\d]', '', value)
+        
+        if len(clean_number) < 4:
+            raise serializers.ValidationError("Phone number too short")
+        
+        if len(clean_number) > 15:
+            raise serializers.ValidationError("Phone number too long")
+        
+        return clean_number
+    
+    def validate(self, data):
+        """Validate the complete phone number"""
+        from .country_codes import format_phone_number, validate_phone_number
+        
+        country_code = data.get('country_code')
+        phone_number = data.get('phone_number')
+        
+        try:
+            formatted_number = format_phone_number(country_code, phone_number)
+            if not validate_phone_number(formatted_number):
+                raise serializers.ValidationError("Invalid phone number format")
+            
+            data['formatted_phone_number'] = formatted_number
+            return data
+            
+        except Exception as e:
+            raise serializers.ValidationError(f"Error validating phone number: {str(e)}")
+
+
+class UpdatePhoneNumberSerializer(serializers.ModelSerializer):
+    """Serializer for updating user phone number"""
+    country_code = serializers.CharField(max_length=5, required=True, write_only=True)
+    phone_number_input = serializers.CharField(max_length=15, required=True, write_only=True)
+    
+    class Meta:
+        model = User
+        fields = ['country_code', 'phone_number_input', 'phone_number']
+        read_only_fields = ['phone_number']
+    
+    def validate(self, data):
+        """Validate and format phone number"""
+        country_code = data.get('country_code')
+        phone_input = data.get('phone_number_input')
+        
+        # Use the PhoneNumberSerializer for validation
+        phone_serializer = PhoneNumberSerializer(data={
+            'country_code': country_code,
+            'phone_number': phone_input
+        })
+        
+        if phone_serializer.is_valid():
+            data['phone_number'] = phone_serializer.validated_data['formatted_phone_number']
+            return data
+        else:
+            raise serializers.ValidationError(phone_serializer.errors)
+    
+    def update(self, instance, validated_data):
+        """Update user phone number"""
+        # Remove write-only fields before saving
+        validated_data.pop('country_code', None)
+        validated_data.pop('phone_number_input', None)
+        
+        return super().update(instance, validated_data)

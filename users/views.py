@@ -6,12 +6,14 @@ from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
 from django.core.cache import cache
+from django.shortcuts import render, HttpResponse
 import random
 
 from .serializers import (
     BasicUserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     DriverSerializer, SendOTPSerializer, VerifyOTPSerializer, DeleteAccountSerializer,
+    GoogleLoginSerializer, FacebookLoginSerializer, PhoneNumberSerializer, UpdatePhoneNumberSerializer
 )
 from .email_utils import send_welcome_email, send_deletion_confirmation_email
 
@@ -354,37 +356,215 @@ class DeleteAccountView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class TestEmailView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
+class GoogleLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+    
     def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        if serializer.is_valid():
+            access_token = serializer.validated_data['access_token']
+            
+            try:
+                import requests
+                response = requests.get(
+                    'https://www.googleapis.com/oauth2/v1/userinfo',
+                    params={'access_token': access_token}
+                )
+                
+                if response.status_code != 200:
+                    return Response({
+                        'error': 'Invalid Google access token'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                user_data = response.json()
+                email = user_data.get('email')
+                name = user_data.get('name', '')
+                first_name = user_data.get('given_name', '')
+                last_name = user_data.get('family_name', '')
+                
+                try:
+                    user = User.objects.get(email=email)
+                    created = False
+                except User.DoesNotExist:
+                    user = User.objects.create_user(
+                        email=email,
+                        username=email,
+                        full_name=name or f"{first_name} {last_name}".strip(),
+                        account_type='user',
+                        is_verified=True
+                    )
+                    created = True
+                
+                refresh = RefreshToken.for_user(user)
+                
+                if created and user.email:
+                    try:
+                        send_welcome_email(user)
+                    except Exception as e:
+                        print(f"Failed to send welcome email: {str(e)}")
+                
+                return Response({
+                    'message': 'Google login successful',
+                    'user': BasicUserSerializer(user).data,
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                    'created': created
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                return Response({
+                    'error': f'Google authentication failed: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FacebookLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        serializer = FacebookLoginSerializer(data=request.data)
+        if serializer.is_valid():
+            access_token = serializer.validated_data['access_token']
+            account_type = serializer.validated_data.get('account_type', 'user')
+            
+            try:
+                import requests
+                response = requests.get(
+                    'https://graph.facebook.com/me',
+                    params={
+                        'access_token': access_token,
+                        'fields': 'id,name,email,first_name,last_name'
+                    }
+                )
+                
+                if response.status_code != 200:
+                    return Response({
+                        'error': 'Invalid Facebook access token'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                user_data = response.json()
+                
+                if 'error' in user_data:
+                    return Response({
+                        'error': 'Invalid Facebook access token'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                email = user_data.get('email')
+                facebook_id = user_data.get('id')
+                
+                # If no email, create a fallback email using Facebook ID
+                if not email:
+                    if not facebook_id:
+                        return Response({
+                            'error': 'Facebook account must have either an email address or valid ID'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    # Create a unique email using Facebook ID
+                    email = f"fb_{facebook_id}@facebook.user"
+                
+                name = user_data.get('name', '')
+                first_name = user_data.get('first_name', '')
+                last_name = user_data.get('last_name', '')
+                
+                # Use Facebook ID as username if available, otherwise use email
+                username = f"fb_{facebook_id}" if facebook_id else email
+                
+                try:
+                    # Try to find user by email first, then by Facebook ID pattern
+                    try:
+                        user = User.objects.get(email=email)
+                    except User.DoesNotExist:
+                        # Try to find by Facebook username pattern
+                        if facebook_id:
+                            user = User.objects.get(username=f"fb_{facebook_id}")
+                        else:
+                            raise User.DoesNotExist
+                    created = False
+                except User.DoesNotExist:
+                    user = User.objects.create_user(
+                        email=email,
+                        username=username,
+                        full_name=name or f"{first_name} {last_name}".strip(),
+                        account_type=account_type,
+                        is_verified=True
+                    )
+                    created = True
+                
+                refresh = RefreshToken.for_user(user)
+                
+                if created and user.email:
+                    try:
+                        send_welcome_email(user)
+                    except Exception as e:
+                        print(f"Failed to send welcome email: {str(e)}")
+                
+                return Response({
+                    'message': 'Facebook login successful',
+                    'user': BasicUserSerializer(user).data,
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                    'created': created
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                return Response({
+                    'error': f'Facebook authentication failed: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PhoneNumberManagementView(APIView):
+    """API endpoint for managing user phone numbers with country codes"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get current user's phone number and available country codes"""
+        from .country_codes import get_country_codes, get_country_by_phone_code
+        
         user = request.user
+        current_phone = user.phone_number
+        current_country = None
         
-        if not user.email:
-            return Response({
-                'error': 'User has no email address'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        if current_phone:
+            # Try to extract country code from current phone number
+            for country in get_country_codes():
+                if current_phone.startswith(country['phone_code']):
+                    current_country = country
+                    break
         
-        try:
-            email_sent, email_message = send_welcome_email(user)
+        return Response({
+            'current_phone_number': current_phone,
+            'current_country': current_country,
+            'available_countries': get_country_codes(),
+            'user_id': user.id
+        }, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        """Update user's phone number with country code"""
+        serializer = UpdatePhoneNumberSerializer(
+            instance=request.user,
+            data=request.data,
+            partial=True
+        )
+        
+        if serializer.is_valid():
+            user = serializer.save()
             
             return Response({
-                'message': 'Test email attempt completed',
-                'email_sent': email_sent,
-                'email_message': email_message,
-                'user_email': user.email,
-                'settings_check': {
-                    'EMAIL_HOST': getattr(settings, 'EMAIL_HOST', 'Not set'),
-                    'EMAIL_PORT': getattr(settings, 'EMAIL_PORT', 'Not set'),
-                    'EMAIL_USE_TLS': getattr(settings, 'EMAIL_USE_TLS', 'Not set'),
-                    'EMAIL_HOST_USER': '***' if getattr(settings, 'EMAIL_HOST_USER', None) else 'Not set',
-                    'EMAIL_HOST_PASSWORD': '***' if getattr(settings, 'EMAIL_HOST_PASSWORD', None) else 'Not set',
-                    'DEFAULT_FROM_EMAIL': getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set'),
-                }
+                'message': 'Phone number updated successfully',
+                'phone_number': user.phone_number,
+                'user': BasicUserSerializer(user).data
             }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response({
-                'error': f'Exception occurred: {str(e)}',
-                'user_email': user.email
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request):
+        """Remove user's phone number"""
+        user = request.user
+        user.phone_number = None
+        user.save()
+        
+        return Response({
+            'message': 'Phone number removed successfully'
+        }, status=status.HTTP_200_OK)

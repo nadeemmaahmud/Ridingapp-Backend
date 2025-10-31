@@ -42,11 +42,11 @@ def send_confirmation_email(user, email_type, **kwargs):
             template_name = 'emails/welcome_email.html'
             
             plain_message = f"""
-Dear {user.get_full_name() or user.username},
+                Dear {user.get_full_name() or user.username},
 
-Welcome to Riding App!
+                Welcome to Riding App!
 
-Your account has been successfully created. We're excited to have you join our community.                Account Details:
+                Your account has been successfully created. We're excited to have you join our community.                Account Details:
                 - Account Type: {user.get_account_type_display()}
                 - Email: {user.email}
                 - Registration Date: {user.date_joined.strftime('%B %d, %Y at %I:%M %p')}
