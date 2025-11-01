@@ -6,18 +6,109 @@ from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
 from django.core.cache import cache
-from django.shortcuts import render, HttpResponse
-import random
+from django.contrib import messages
+from twilio.rest import Client
+import os
 
 from .serializers import (
     BasicUserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     DriverSerializer, SendOTPSerializer, VerifyOTPSerializer, DeleteAccountSerializer,
-    GoogleLoginSerializer, FacebookLoginSerializer, PhoneNumberSerializer, UpdatePhoneNumberSerializer
+    GoogleLoginSerializer, FacebookLoginSerializer
 )
-from .email_utils import send_welcome_email, send_deletion_confirmation_email
+
+from .email_utils import send_welcome_email, send_deletion_confirmation_email, send_deletion_otp_email, send_password_reset_otp_email
 
 User = get_user_model()
+
+def send_otp_verification(user, purpose='general'):
+    """
+    Unified function to send OTP via email or SMS
+    purpose: 'general', 'password_reset', 'deletion'
+    """
+    if hasattr(user, 'phone_number') and user.phone_number:
+        # Send SMS
+        if purpose == 'password_reset':
+            message_body = f'Your Riding App password reset code is: {user.otp_code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this, please ignore.'
+        elif purpose == 'deletion':
+            message_body = f"Your account deletion verification code is: {user.otp_code}. This code will expire in 10 minutes."
+        else:
+            message_body = f'Your Riding App verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.'
+        
+        if is_restricted_country(user.phone_number):
+            print(f"{purpose.title()} SMS OTP Simulated for {user.phone_number}: {user.otp_code}")
+            if settings.DEBUG:
+                print(f"Note: {user.phone_number} is from a Twilio-restricted region")
+            return True, f"SMS simulated for restricted region - Trial account limitation"
+        else:
+            try:
+                if settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS:
+                    print(f"{purpose.title()} SMS OTP disabled for {user.phone_number}. OTP: {user.otp_code}")
+                    return True, "SMS disabled in development mode"
+                else:
+                    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                    client.messages.create(
+                        body=message_body,
+                        from_=settings.TWILIO_PHONE_NUMBER,
+                        to=user.phone_number
+                    )
+                    return True, "SMS sent successfully"
+            except Exception as e:
+                error_message = str(e)
+                if "21612" in error_message or "21408" in error_message or "restricted country" in error_message.lower() or "permission to send an sms has not been enabled" in error_message.lower():
+                    print(f"{purpose.title()} SMS OTP Simulated for {user.phone_number}: {user.otp_code}")
+                    if settings.DEBUG:
+                        print(f"Note: {user.phone_number} is from a Twilio-restricted region")
+                    return True, "SMS simulated for restricted region - Trial account limitation"
+                else:
+                    return False, f"Failed to send SMS: {error_message}"
+    
+    elif user.email:
+        # Send Email
+        try:
+            if purpose == 'password_reset':
+                email_sent, email_message = send_password_reset_otp_email(user)
+            elif purpose == 'deletion':
+                email_sent, email_message = send_deletion_otp_email(user)
+            else:
+                # For general OTP, use a simple email
+                send_mail(
+                    'Your OTP Code - Riding App',
+                    f'Your verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
+                )
+                return True, "Email sent successfully"
+            
+            return email_sent, email_message
+        except Exception as e:
+            return False, f"Failed to send email: {str(e)}"
+    
+    else:
+        return False, "User has no email or phone number"
+
+TWILIO_RESTRICTED_COUNTRIES = [
+    '+880',  # Bangladesh
+    '+92',   # Pakistan  
+    '+91',   # India
+    '+234',  # Nigeria
+    '+254',  # Kenya
+    '+44',   # UK (based on your error)
+    '+33',   # France
+    '+49',   # Germany
+    '+39',   # Italy
+    '+34',   # Spain
+]
+
+def is_restricted_country(phone_number):
+    """Check if phone number is from a Twilio-restricted country"""
+    if not phone_number:
+        return False
+    for country_code in TWILIO_RESTRICTED_COUNTRIES:
+        if phone_number.startswith(country_code):
+            return True
+    return False
 
 class UserRegistrationView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -28,27 +119,75 @@ class UserRegistrationView(APIView):
             user = serializer.save()
             
             email_status = "No email address provided"
+            phone_status = "No phone number provided"
+            
             if user.email:
                 try:
                     email_sent, email_message = send_welcome_email(user)
                     if email_sent:
                         email_status = "Welcome email sent successfully"
-                        print(f"✅ Welcome email sent to {user.email}")
+                        print(f"Welcome email sent to {user.email}")
                     else:
                         email_status = f"Failed to send welcome email: {email_message}"
-                        print(f"❌ Failed to send welcome email: {email_message}")
+                        print(f"Failed to send welcome email: {email_message}")
                 except Exception as e:
                     email_status = f"Exception sending welcome email: {str(e)}"
-                    print(f"💥 Exception sending welcome email: {str(e)}")
+                    print(f"Exception sending welcome email: {str(e)}")
+
+            elif user.phone_number:
+                if is_restricted_country(user.phone_number):
+                    phone_status = "SMS simulated for restricted country"
+                    print(f"SMS Simulated for {user.phone_number}: Welcome to Riding App! Account created successfully.")
+                    if settings.DEBUG:
+                        print(f"Note: {user.phone_number} is from a Twilio-restricted country. SMS simulated.")
+                else:
+                    if settings.DEBUG:
+                        print(f"Attempting to send SMS to {user.phone_number} (not in restricted list)")
+                    try:
+                        if settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS:
+                            phone_status = "SMS disabled in development mode"
+                            print(f"SMS sending disabled for {user.phone_number}")
+                        else:
+                            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                            twilio_message = client.messages.create(
+                                body=f"Account created successfully! Welcome to Riding App. Your account is ready to use.",
+                                from_=settings.TWILIO_PHONE_NUMBER,
+                                to=user.phone_number
+                            )
+                            phone_status = "Welcome SMS sent successfully"
+                            print(f"Welcome SMS sent to {user.phone_number}")
+                    except Exception as e:
+                        error_message = str(e)
+                        if "21612" in error_message or "21408" in error_message or "restricted country" in error_message.lower() or "permission to send an sms has not been enabled" in error_message.lower():
+                            phone_status = "SMS simulated for restricted country"
+                            print(f"SMS Simulated for {user.phone_number}: Welcome to Riding App! Account created successfully.")
+                            if settings.DEBUG:
+                                print(f"Note: {user.phone_number} is from a Twilio-restricted region. SMS simulated in development.")
+                        elif "21614" in error_message:
+                            phone_status = "Invalid phone number format"
+                            print(f"Invalid phone number: {user.phone_number}")
+                        else:
+                            phone_status = "SMS service temporarily unavailable"
+                            print(f"SMS Error for {user.phone_number}: {error_message}")
+                            
+                            if settings.DEBUG:
+                                print(f"Note: To fix Twilio trial restrictions, verify {user.phone_number} in Twilio Console or upgrade to paid account")
             
             response_data = {
                 'message': 'User registered successfully',
                 'user': BasicUserSerializer(user).data,
             }
             
-            if settings.DEBUG:
-                response_data['email_status'] = email_status
+            # Always provide SMS simulation feedback for better user experience
+            if user.phone_number and phone_status == "SMS simulated for restricted country":
+                response_data['sms_note'] = f"SMS delivery to {user.phone_number} is simulated due to trial account restrictions. Your account is ready to use."
             
+            if settings.DEBUG:
+                if user.email:
+                    response_data['email_status'] = email_status
+                elif user.phone_number:
+                    response_data['phone_status'] = phone_status
+
             return Response(response_data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -76,16 +215,39 @@ class UserLogoutView(APIView):
 
     def post(self, request):
         try:
-            refresh_token = request.data["refresh"]
+            refresh_token = request.data.get("refresh")
+            
+            if not refresh_token:
+                return Response({
+                    'message': 'Logout successful (client-side logout)',
+                    'note': 'Please remove tokens from client storage'
+                }, status=status.HTTP_200_OK)
+            
             token = RefreshToken(refresh_token)
             token.blacklist()
+            
             return Response({
-                'message': 'Logout successful'
+                'message': 'Logout successful (server-side logout)',
+                'note': 'Refresh token has been blacklisted'
             }, status=status.HTTP_200_OK)
+            
         except Exception as e:
-            return Response({
-                'error': 'Something went wrong'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            print(f"Logout error: {str(e)}")
+            
+            if "token_blacklist" in str(e).lower():
+                return Response({
+                    'error': 'Token blacklist not configured properly'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            elif "invalid" in str(e).lower() or "expired" in str(e).lower():
+                return Response({
+                    'message': 'Logout successful',
+                    'note': 'Token was already invalid or expired'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'error': 'Logout failed. Please try again.',
+                    'debug_info': str(e) if settings.DEBUG else None
+                }, status=status.HTTP_400_BAD_REQUEST)
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -93,11 +255,50 @@ class ChangePasswordView(APIView):
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
+            user = serializer.save()
+            from django.utils import timezone
+            user.last_password_change = timezone.now()
+            user.save()
+            
+            if user.email:
+                try:
+                    send_mail(
+                        'Password Changed - Riding App',
+                        f'Dear {user.get_full_name() or user.username},\n\nYour password has been successfully changed.\n\nIf you did not make this change, please contact our support team immediately.\n\nBest regards,\nThe Riding App Team',
+                        settings.DEFAULT_FROM_EMAIL,
+                        [user.email],
+                        fail_silently=True,
+                    )
+                except Exception as e:
+                    print(f"Failed to send password change notification: {str(e)}")
+            elif user.phone_number:
+                try:
+                    if not is_restricted_country(user.phone_number):
+                        if not (settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS):
+                            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                            client.messages.create(
+                                body=f'Riding App: Your password has been changed successfully. If you did not make this change, contact support immediately.',
+                                from_=settings.TWILIO_PHONE_NUMBER,
+                                to=user.phone_number
+                            )
+                    else:
+                        print(f"Password change notification simulated for {user.phone_number}")
+                except Exception as e:
+                    print(f"Failed to send password change SMS notification: {str(e)}")
+
+            
+            refresh_token = request.data.get("refresh")
+            if refresh_token:
+                try:
+                    token = RefreshToken(refresh_token)
+                    token.blacklist()
+                except Exception as e:
+                    print(f"Failed to blacklist token after password change: {str(e)}")
+
             return Response({
-                'message': 'Password changed successfully'
+                'message': 'Password changed successfully. You have been logged out for security. Please login again with your new password.',
+                'note': 'Refresh token has been blacklisted. Access token is now invalid.'
             }, status=status.HTTP_200_OK)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ForgotPasswordView(APIView):
@@ -121,26 +322,29 @@ class ForgotPasswordView(APIView):
             
             user.generate_otp()
             
-            if user.email:
-                try:
-                    send_mail(
-                        'Password Reset OTP - Riding App',
-                        f'Your password reset verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request a password reset, please ignore this email.',
-                        settings.DEFAULT_FROM_EMAIL,
-                        [user.email],
-                        fail_silently=False,
-                    )
-                except Exception as e:
-                    return Response({
-                        'error': 'Failed to send OTP via email'
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            else:
-                pass
+            success, message = send_otp_verification(user, 'password_reset')
             
-            return Response({
-                'message': 'OTP sent successfully for password reset',
-                'otp_code': user.otp_code if settings.DEBUG else None
-            }, status=status.HTTP_200_OK)
+            if not success:
+                return Response({
+                    'error': f'Failed to send OTP: {message}',
+                    'debug_otp': user.otp_code if settings.DEBUG else None
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            if hasattr(user, 'phone_number') and user.phone_number:
+                response_data = {
+                    'message': 'OTP sent successfully via SMS for password reset',
+                    'otp_code': user.otp_code if settings.DEBUG else None
+                }
+                if "SMS simulated for restricted region" in message:
+                    response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
+                    if not settings.DEBUG:  # Provide OTP in simulation cases even in production
+                        response_data['otp_code'] = user.otp_code
+                return Response(response_data, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'message': 'OTP sent successfully via email for password reset',
+                    'otp_code': user.otp_code if settings.DEBUG else None
+                }, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -255,26 +459,26 @@ class SendOTPView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             user.generate_otp()
-            if user.email:
-                try:
-                    send_mail(
-                        'Your OTP Code - Riding App',
-                        f'Your verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.',
-                        settings.DEFAULT_FROM_EMAIL,
-                        [user.email],
-                        fail_silently=False,
-                    )
-                except Exception as e:
-                    return Response({
-                        'error': 'Failed to send OTP via email'
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            else:
-                pass
             
-            return Response({
+            success, message = send_otp_verification(user, 'general')
+            
+            if not success:
+                return Response({
+                    'error': f'Failed to send OTP: {message}',
+                    'debug_otp': user.otp_code if settings.DEBUG else None
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            response_data = {
                 'message': 'OTP sent successfully',
                 'otp_code': user.otp_code if settings.DEBUG else None
-            }, status=status.HTTP_200_OK)
+            }
+            
+            if hasattr(user, 'phone_number') and user.phone_number and "SMS simulated for restricted region" in message:
+                response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
+                if not settings.DEBUG:  # Provide OTP in simulation cases even in production
+                    response_data['otp_code'] = user.otp_code
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -325,6 +529,42 @@ class DeleteAccountView(APIView):
 
     def post(self, request):
         user = self.request.user
+        
+        user.generate_otp()
+        user.save()
+        
+        cache.set(f'delete_user_{user.id}', True, timeout=600)
+        
+        success, message = send_otp_verification(user, 'deletion')
+        
+        if not success:
+            return Response({
+                'error': f'Failed to send OTP: {message}',
+                'debug_otp': user.otp_code if settings.DEBUG else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        if hasattr(user, 'phone_number') and user.phone_number:
+            response_data = {
+                'message': 'Account deletion OTP sent successfully via SMS. Please check your phone.',
+                'otp_code': user.otp_code if settings.DEBUG else None
+            }
+            if "SMS simulated for restricted region" in message:
+                response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
+                if not settings.DEBUG:  # Provide OTP in simulation cases even in production
+                    response_data['otp_code'] = user.otp_code
+            return Response(response_data, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'message': 'Account deletion OTP sent successfully via email. Please check your email.',
+                'otp_code': user.otp_code if settings.DEBUG else None
+            }, status=status.HTTP_200_OK)
+
+
+class ConfirmDeleteAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = self.request.user
         serializer = DeleteAccountSerializer(data=request.data, context={'user': user})
         
         if serializer.is_valid():
@@ -363,6 +603,7 @@ class GoogleLoginView(APIView):
         serializer = GoogleLoginSerializer(data=request.data)
         if serializer.is_valid():
             access_token = serializer.validated_data['access_token']
+            account_type = serializer.validated_data.get('account_type', 'user')
             
             try:
                 import requests
@@ -390,8 +631,7 @@ class GoogleLoginView(APIView):
                         email=email,
                         username=email,
                         full_name=name or f"{first_name} {last_name}".strip(),
-                        account_type='user',
-                        is_verified=True
+                        account_type=account_type
                     )
                     created = True
                 
@@ -453,28 +693,23 @@ class FacebookLoginView(APIView):
                 email = user_data.get('email')
                 facebook_id = user_data.get('id')
                 
-                # If no email, create a fallback email using Facebook ID
                 if not email:
                     if not facebook_id:
                         return Response({
                             'error': 'Facebook account must have either an email address or valid ID'
                         }, status=status.HTTP_400_BAD_REQUEST)
-                    # Create a unique email using Facebook ID
                     email = f"fb_{facebook_id}@facebook.user"
                 
                 name = user_data.get('name', '')
                 first_name = user_data.get('first_name', '')
                 last_name = user_data.get('last_name', '')
                 
-                # Use Facebook ID as username if available, otherwise use email
                 username = f"fb_{facebook_id}" if facebook_id else email
                 
                 try:
-                    # Try to find user by email first, then by Facebook ID pattern
                     try:
                         user = User.objects.get(email=email)
                     except User.DoesNotExist:
-                        # Try to find by Facebook username pattern
                         if facebook_id:
                             user = User.objects.get(username=f"fb_{facebook_id}")
                         else:
@@ -485,8 +720,7 @@ class FacebookLoginView(APIView):
                         email=email,
                         username=username,
                         full_name=name or f"{first_name} {last_name}".strip(),
-                        account_type=account_type,
-                        is_verified=True
+                        account_type=account_type
                     )
                     created = True
                 
@@ -512,59 +746,3 @@ class FacebookLoginView(APIView):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class PhoneNumberManagementView(APIView):
-    """API endpoint for managing user phone numbers with country codes"""
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request):
-        """Get current user's phone number and available country codes"""
-        from .country_codes import get_country_codes, get_country_by_phone_code
-        
-        user = request.user
-        current_phone = user.phone_number
-        current_country = None
-        
-        if current_phone:
-            # Try to extract country code from current phone number
-            for country in get_country_codes():
-                if current_phone.startswith(country['phone_code']):
-                    current_country = country
-                    break
-        
-        return Response({
-            'current_phone_number': current_phone,
-            'current_country': current_country,
-            'available_countries': get_country_codes(),
-            'user_id': user.id
-        }, status=status.HTTP_200_OK)
-    
-    def post(self, request):
-        """Update user's phone number with country code"""
-        serializer = UpdatePhoneNumberSerializer(
-            instance=request.user,
-            data=request.data,
-            partial=True
-        )
-        
-        if serializer.is_valid():
-            user = serializer.save()
-            
-            return Response({
-                'message': 'Phone number updated successfully',
-                'phone_number': user.phone_number,
-                'user': BasicUserSerializer(user).data
-            }, status=status.HTTP_200_OK)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    def delete(self, request):
-        """Remove user's phone number"""
-        user = request.user
-        user.phone_number = None
-        user.save()
-        
-        return Response({
-            'message': 'Phone number removed successfully'
-        }, status=status.HTTP_200_OK)

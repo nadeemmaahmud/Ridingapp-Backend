@@ -16,7 +16,7 @@ class UserRegistrationSerializer(serializers.Serializer):
     email_or_phone = serializers.CharField(
         max_length=100, 
         required=True,
-        help_text="Enter either your email address or phone number"
+        help_text="Enter either your email address or phone number with country code (e.g., +1234567890)"
     )
     password = serializers.CharField(
         write_only=True, 
@@ -34,10 +34,12 @@ class UserRegistrationSerializer(serializers.Serializer):
             except ValidationError:
                 raise serializers.ValidationError("Please enter a valid email address.")
         else:
-            if not re.match(r'^\+?1?\d{9,15}$', value):
-                raise serializers.ValidationError("Please enter a valid phone number (9-15 digits).")
+            if not re.match(r'^\+\d{1,4}\d{7,15}$', value):
+                raise serializers.ValidationError("Phone number must include country code and be in format +1234567890 (country code + 7-15 digits).")
+            
             if User.objects.filter(phone_number=value).exists():
                 raise serializers.ValidationError("A user with this phone number already exists.")
+            
             return value
 
     def create(self, validated_data):
@@ -48,7 +50,7 @@ class UserRegistrationSerializer(serializers.Serializer):
             validated_data['email'] = email_or_phone
             validated_data['phone_number'] = None
         else:
-            validated_data['phone_number'] = email_or_phone  
+            validated_data['phone_number'] = email_or_phone
             validated_data['email'] = None
             
         user = User.objects.create_user(password=password, **validated_data)
@@ -100,12 +102,11 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate(self, data):
         if data['old_password'] == data['new_password']:
             raise serializers.ValidationError("New password must be different from the old password.")
-        return data
-    
-    def validate_new_password(self, attrs):
-        if attrs['new_password'] != attrs['new_password_confirm']:
+        
+        if data['new_password'] != data['new_password_confirm']:
             raise serializers.ValidationError("New passwords don't match.")
-        return attrs
+        
+        return data
 
     def save(self, **kwargs):
         user = self.context['request'].user
@@ -163,7 +164,7 @@ class DriverSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'account_type', 'full_name', 'email', 'phone_number', 
+            'id', 'account_type', 'full_name', 'email', 'phone_number',
             'date_joined', 'profile_picture', 'is_verified',
             'id_number', 'payment_method', 'driving_license_picture', 
             'car_picture', 'car_name', 'plate_number'
@@ -324,90 +325,3 @@ class FacebookLoginSerializer(serializers.Serializer):
             
         except requests.RequestException:
             raise serializers.ValidationError("Failed to validate Facebook access token")
-
-
-class PhoneNumberSerializer(serializers.Serializer):
-    """Serializer for updating phone number with country code"""
-    country_code = serializers.CharField(max_length=5, required=True, help_text="Country code (e.g., +1, +91)")
-    phone_number = serializers.CharField(max_length=15, required=True, help_text="Phone number without country code")
-    
-    def validate_country_code(self, value):
-        """Validate country code format"""
-        if not value.startswith('+'):
-            raise serializers.ValidationError("Country code must start with +")
-        
-        from .country_codes import get_country_codes
-        country_codes = [country['phone_code'] for country in get_country_codes()]
-        
-        if value not in country_codes:
-            raise serializers.ValidationError("Invalid country code")
-        
-        return value
-    
-    def validate_phone_number(self, value):
-        """Validate phone number"""
-        import re
-        # Remove any non-digit characters
-        clean_number = re.sub(r'[^\d]', '', value)
-        
-        if len(clean_number) < 4:
-            raise serializers.ValidationError("Phone number too short")
-        
-        if len(clean_number) > 15:
-            raise serializers.ValidationError("Phone number too long")
-        
-        return clean_number
-    
-    def validate(self, data):
-        """Validate the complete phone number"""
-        from .country_codes import format_phone_number, validate_phone_number
-        
-        country_code = data.get('country_code')
-        phone_number = data.get('phone_number')
-        
-        try:
-            formatted_number = format_phone_number(country_code, phone_number)
-            if not validate_phone_number(formatted_number):
-                raise serializers.ValidationError("Invalid phone number format")
-            
-            data['formatted_phone_number'] = formatted_number
-            return data
-            
-        except Exception as e:
-            raise serializers.ValidationError(f"Error validating phone number: {str(e)}")
-
-
-class UpdatePhoneNumberSerializer(serializers.ModelSerializer):
-    """Serializer for updating user phone number"""
-    country_code = serializers.CharField(max_length=5, required=True, write_only=True)
-    phone_number_input = serializers.CharField(max_length=15, required=True, write_only=True)
-    
-    class Meta:
-        model = User
-        fields = ['country_code', 'phone_number_input', 'phone_number']
-        read_only_fields = ['phone_number']
-    
-    def validate(self, data):
-        """Validate and format phone number"""
-        country_code = data.get('country_code')
-        phone_input = data.get('phone_number_input')
-        
-        # Use the PhoneNumberSerializer for validation
-        phone_serializer = PhoneNumberSerializer(data={
-            'country_code': country_code,
-            'phone_number': phone_input
-        })
-        
-        if phone_serializer.is_valid():
-            data['phone_number'] = phone_serializer.validated_data['formatted_phone_number']
-            return data
-        else:
-            raise serializers.ValidationError(phone_serializer.errors)
-    
-    def update(self, instance, validated_data):
-        """Update user phone number"""
-        # Remove write-only fields before saving
-        validated_data.pop('country_code', None)
-        validated_data.pop('phone_number_input', None)
-        
-        return super().update(instance, validated_data)

@@ -49,20 +49,18 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     payment_method_choices = (
         ('credit_card', 'Credit Card'),
-        ('paypal', 'PayPal'),
-        ('stripe', 'Stripe'),
-        ('bank_transfer', 'Bank Transfer'),
         ('cash', 'Cash'),
     )
 
     account_type = models.CharField(max_length=10, choices=account_type_choices, default='user')
     full_name = models.CharField(max_length=100, blank=True, default='')
     email = models.EmailField(unique=True, blank=True, null=True)
-    phone_number = models.CharField(max_length=15, unique=True, blank=True, null=True)
+    phone_number = models.CharField(max_length=20, unique=True, blank=True, null=True)
     username = models.CharField(max_length=150, unique=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_password_change = models.DateTimeField(blank=True, null=True)
 
     is_verified = models.BooleanField(default=False)
     otp_code = models.CharField(max_length=6, blank=True, null=True)

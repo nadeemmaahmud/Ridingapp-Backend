@@ -92,28 +92,78 @@ def send_confirmation_email(user, email_type, **kwargs):
                 Best regards,
                 The Riding App Team
             """.strip()
+
+        elif email_type == 'deletion_otp':
+            subject = 'Account Deletion Verification - Riding App'
+            template_name = None
+            
+            plain_message = f"""
+Dear {user.get_full_name() or user.username},
+
+You have requested to delete your Riding App account. To confirm this action, please use the verification code below:
+
+Verification Code: {user.otp_code}
+
+This code will expire in 10 minutes.
+
+If you did not request this action, please ignore this email and your account will remain active.
+
+Best regards,
+The Riding App Team
+            """.strip()
+
+        elif email_type == 'password_reset_otp':
+            subject = 'Password Reset Verification - Riding App'
+            template_name = None
+            
+            plain_message = f"""
+Dear {user.get_full_name() or user.username},
+
+You have requested to reset your Riding App password. Please use the verification code below:
+
+Verification Code: {user.otp_code}
+
+This code will expire in 10 minutes.
+
+If you did not request a password reset, please ignore this email and your account will remain secure.
+
+Best regards,
+The Riding App Team
+            """.strip()
             
         else:
             logger.error(f"Unknown email type: {email_type}")
             return False, f"Unknown email type: {email_type}"
         
         try:
-            print(f"[INFO] Attempting to render HTML template: {template_name}")
-            html_message = render_to_string(template_name, context)
-            print("[OK] HTML template rendered successfully")
-            
-            print(f"[INFO] Creating email with subject: {subject}")
-            email = EmailMultiAlternatives(
-                subject=subject,
-                body=plain_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                to=[user.email]
-            )
-            email.attach_alternative(html_message, "text/html")
-            
-            print(f"[INFO] Sending email to {user.email}...")
-            email.send()
-            print("[SUCCESS] Email sent successfully!")
+            if template_name:
+                print(f"[INFO] Attempting to render HTML template: {template_name}")
+                html_message = render_to_string(template_name, context)
+                print("[OK] HTML template rendered successfully")
+                
+                print(f"[INFO] Creating email with subject: {subject}")
+                email = EmailMultiAlternatives(
+                    subject=subject,
+                    body=plain_message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[user.email]
+                )
+                email.attach_alternative(html_message, "text/html")
+                
+                print(f"[INFO] Sending email to {user.email}...")
+                email.send()
+                print("[SUCCESS] Email sent successfully!")
+            else:
+                
+                print(f"[INFO] Sending plain text OTP email to {user.email}...")
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+                print("[SUCCESS] Plain text email sent successfully!")
             
         except Exception as template_error:
             print(f"[WARNING] HTML template failed, sending plain text: {template_error}")
@@ -145,6 +195,14 @@ def send_confirmation_email(user, email_type, **kwargs):
 
 def send_welcome_email(user):
     return send_confirmation_email(user, 'registration')
+
+
+def send_password_reset_otp_email(user):
+    return send_confirmation_email(user, 'password_reset_otp')
+
+
+def send_deletion_otp_email(user):
+    return send_confirmation_email(user, 'deletion_otp')
 
 
 def send_deletion_confirmation_email(user):
