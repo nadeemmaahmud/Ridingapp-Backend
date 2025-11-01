@@ -21,13 +21,17 @@ from .email_utils import send_welcome_email, send_deletion_confirmation_email, s
 
 User = get_user_model()
 
+def get_user_by_identifier(identifier):
+    try:
+        if '@' in identifier:
+            return User.objects.get(email=identifier)
+        else:
+            return User.objects.get(phone_number=identifier)
+    except User.DoesNotExist:
+        return None
+
 def send_otp_verification(user, purpose='general'):
-    """
-    Unified function to send OTP via email or SMS
-    purpose: 'general', 'password_reset', 'deletion'
-    """
     if hasattr(user, 'phone_number') and user.phone_number:
-        # Send SMS
         if purpose == 'password_reset':
             message_body = f'Your Riding App password reset code is: {user.otp_code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this, please ignore.'
         elif purpose == 'deletion':
@@ -35,43 +39,24 @@ def send_otp_verification(user, purpose='general'):
         else:
             message_body = f'Your Riding App verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.'
         
-        if is_restricted_country(user.phone_number):
-            print(f"{purpose.title()} SMS OTP Simulated for {user.phone_number}: {user.otp_code}")
-            if settings.DEBUG:
-                print(f"Note: {user.phone_number} is from a Twilio-restricted region")
-            return True, f"SMS simulated for restricted region - Trial account limitation"
-        else:
-            try:
-                if settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS:
-                    print(f"{purpose.title()} SMS OTP disabled for {user.phone_number}. OTP: {user.otp_code}")
-                    return True, "SMS disabled in development mode"
-                else:
-                    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-                    client.messages.create(
-                        body=message_body,
-                        from_=settings.TWILIO_PHONE_NUMBER,
-                        to=user.phone_number
-                    )
-                    return True, "SMS sent successfully"
-            except Exception as e:
-                error_message = str(e)
-                if "21612" in error_message or "21408" in error_message or "restricted country" in error_message.lower() or "permission to send an sms has not been enabled" in error_message.lower():
-                    print(f"{purpose.title()} SMS OTP Simulated for {user.phone_number}: {user.otp_code}")
-                    if settings.DEBUG:
-                        print(f"Note: {user.phone_number} is from a Twilio-restricted region")
-                    return True, "SMS simulated for restricted region - Trial account limitation"
-                else:
-                    return False, f"Failed to send SMS: {error_message}"
+        try:
+            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+            client.messages.create(
+                body=message_body,
+                from_=settings.TWILIO_PHONE_NUMBER,
+                to=user.phone_number
+            )
+            return True, "SMS sent successfully"
+        except Exception as e:
+            return False, f"Failed to send SMS: {str(e)}"
     
     elif user.email:
-        # Send Email
         try:
             if purpose == 'password_reset':
                 email_sent, email_message = send_password_reset_otp_email(user)
             elif purpose == 'deletion':
                 email_sent, email_message = send_deletion_otp_email(user)
             else:
-                # For general OTP, use a simple email
                 send_mail(
                     'Your OTP Code - Riding App',
                     f'Your verification code is: {user.otp_code}\n\nThis code will expire in 10 minutes.',
@@ -87,28 +72,6 @@ def send_otp_verification(user, purpose='general'):
     
     else:
         return False, "User has no email or phone number"
-
-TWILIO_RESTRICTED_COUNTRIES = [
-    '+880',  # Bangladesh
-    '+92',   # Pakistan  
-    '+91',   # India
-    '+234',  # Nigeria
-    '+254',  # Kenya
-    '+44',   # UK (based on your error)
-    '+33',   # France
-    '+49',   # Germany
-    '+39',   # Italy
-    '+34',   # Spain
-]
-
-def is_restricted_country(phone_number):
-    """Check if phone number is from a Twilio-restricted country"""
-    if not phone_number:
-        return False
-    for country_code in TWILIO_RESTRICTED_COUNTRIES:
-        if phone_number.startswith(country_code):
-            return True
-    return False
 
 class UserRegistrationView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -135,52 +98,23 @@ class UserRegistrationView(APIView):
                     print(f"Exception sending welcome email: {str(e)}")
 
             elif user.phone_number:
-                if is_restricted_country(user.phone_number):
-                    phone_status = "SMS simulated for restricted country"
-                    print(f"SMS Simulated for {user.phone_number}: Welcome to Riding App! Account created successfully.")
-                    if settings.DEBUG:
-                        print(f"Note: {user.phone_number} is from a Twilio-restricted country. SMS simulated.")
-                else:
-                    if settings.DEBUG:
-                        print(f"Attempting to send SMS to {user.phone_number} (not in restricted list)")
-                    try:
-                        if settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS:
-                            phone_status = "SMS disabled in development mode"
-                            print(f"SMS sending disabled for {user.phone_number}")
-                        else:
-                            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-                            twilio_message = client.messages.create(
-                                body=f"Account created successfully! Welcome to Riding App. Your account is ready to use.",
-                                from_=settings.TWILIO_PHONE_NUMBER,
-                                to=user.phone_number
-                            )
-                            phone_status = "Welcome SMS sent successfully"
-                            print(f"Welcome SMS sent to {user.phone_number}")
-                    except Exception as e:
-                        error_message = str(e)
-                        if "21612" in error_message or "21408" in error_message or "restricted country" in error_message.lower() or "permission to send an sms has not been enabled" in error_message.lower():
-                            phone_status = "SMS simulated for restricted country"
-                            print(f"SMS Simulated for {user.phone_number}: Welcome to Riding App! Account created successfully.")
-                            if settings.DEBUG:
-                                print(f"Note: {user.phone_number} is from a Twilio-restricted region. SMS simulated in development.")
-                        elif "21614" in error_message:
-                            phone_status = "Invalid phone number format"
-                            print(f"Invalid phone number: {user.phone_number}")
-                        else:
-                            phone_status = "SMS service temporarily unavailable"
-                            print(f"SMS Error for {user.phone_number}: {error_message}")
-                            
-                            if settings.DEBUG:
-                                print(f"Note: To fix Twilio trial restrictions, verify {user.phone_number} in Twilio Console or upgrade to paid account")
+                try:
+                    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                    twilio_message = client.messages.create(
+                        body=f"Account created successfully! Welcome to Riding App. Your account is ready to use.",
+                        from_=settings.TWILIO_PHONE_NUMBER,
+                        to=user.phone_number
+                    )
+                    phone_status = "Welcome SMS sent successfully"
+                    print(f"Welcome SMS sent to {user.phone_number}")
+                except Exception as e:
+                    phone_status = "SMS service temporarily unavailable"
+                    print(f"SMS Error for {user.phone_number}: {str(e)}")
             
             response_data = {
                 'message': 'User registered successfully',
                 'user': BasicUserSerializer(user).data,
             }
-            
-            # Always provide SMS simulation feedback for better user experience
-            if user.phone_number and phone_status == "SMS simulated for restricted country":
-                response_data['sms_note'] = f"SMS delivery to {user.phone_number} is simulated due to trial account restrictions. Your account is ready to use."
             
             if settings.DEBUG:
                 if user.email:
@@ -273,16 +207,12 @@ class ChangePasswordView(APIView):
                     print(f"Failed to send password change notification: {str(e)}")
             elif user.phone_number:
                 try:
-                    if not is_restricted_country(user.phone_number):
-                        if not (settings.DEBUG and hasattr(settings, 'DISABLE_SMS') and settings.DISABLE_SMS):
-                            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-                            client.messages.create(
-                                body=f'Riding App: Your password has been changed successfully. If you did not make this change, contact support immediately.',
-                                from_=settings.TWILIO_PHONE_NUMBER,
-                                to=user.phone_number
-                            )
-                    else:
-                        print(f"Password change notification simulated for {user.phone_number}")
+                    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                    client.messages.create(
+                        body=f'Riding App: Your password has been changed successfully. If you did not make this change, contact support immediately.',
+                        from_=settings.TWILIO_PHONE_NUMBER,
+                        to=user.phone_number
+                    )
                 except Exception as e:
                     print(f"Failed to send password change SMS notification: {str(e)}")
 
@@ -309,13 +239,8 @@ class ForgotPasswordView(APIView):
         if serializer.is_valid():
             email_or_phone = serializer.validated_data['email_or_phone']
             
-            user = None
-            try:
-                if '@' in email_or_phone:
-                    user = User.objects.get(email=email_or_phone)
-                else:
-                    user = User.objects.get(phone_number=email_or_phone)
-            except User.DoesNotExist:
+            user = get_user_by_identifier(email_or_phone)
+            if not user:
                 return Response({
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
@@ -335,10 +260,6 @@ class ForgotPasswordView(APIView):
                     'message': 'OTP sent successfully via SMS for password reset',
                     'otp_code': user.otp_code if settings.DEBUG else None
                 }
-                if "SMS simulated for restricted region" in message:
-                    response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
-                    if not settings.DEBUG:  # Provide OTP in simulation cases even in production
-                        response_data['otp_code'] = user.otp_code
                 return Response(response_data, status=status.HTTP_200_OK)
             else:
                 return Response({
@@ -358,13 +279,8 @@ class ResetPasswordView(APIView):
             otp_code = serializer.validated_data['otp_code']
             new_password = serializer.validated_data['new_password']
             
-            user = None
-            try:
-                if '@' in email_or_phone:
-                    user = User.objects.get(email=email_or_phone)
-                else:
-                    user = User.objects.get(phone_number=email_or_phone)
-            except User.DoesNotExist:
+            user = get_user_by_identifier(email_or_phone)
+            if not user:
                 return Response({
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
@@ -447,13 +363,8 @@ class SendOTPView(APIView):
         if serializer.is_valid():
             email_or_phone = serializer.validated_data['email_or_phone']
             
-            user = None
-            try:
-                if '@' in email_or_phone:
-                    user = User.objects.get(email=email_or_phone)
-                else:
-                    user = User.objects.get(phone_number=email_or_phone)
-            except User.DoesNotExist:
+            user = get_user_by_identifier(email_or_phone)
+            if not user:
                 return Response({
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
@@ -473,11 +384,6 @@ class SendOTPView(APIView):
                 'otp_code': user.otp_code if settings.DEBUG else None
             }
             
-            if hasattr(user, 'phone_number') and user.phone_number and "SMS simulated for restricted region" in message:
-                response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
-                if not settings.DEBUG:  # Provide OTP in simulation cases even in production
-                    response_data['otp_code'] = user.otp_code
-            
             return Response(response_data, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -491,13 +397,8 @@ class VerifyOTPView(APIView):
             email_or_phone = serializer.validated_data['email_or_phone']
             otp_code = serializer.validated_data['otp_code']
             
-            user = None
-            try:
-                if '@' in email_or_phone:
-                    user = User.objects.get(email=email_or_phone)
-                else:
-                    user = User.objects.get(phone_number=email_or_phone)
-            except User.DoesNotExist:
+            user = get_user_by_identifier(email_or_phone)
+            if not user:
                 return Response({
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
@@ -548,10 +449,6 @@ class DeleteAccountView(APIView):
                 'message': 'Account deletion OTP sent successfully via SMS. Please check your phone.',
                 'otp_code': user.otp_code if settings.DEBUG else None
             }
-            if "SMS simulated for restricted region" in message:
-                response_data['sms_note'] = f"SMS to {user.phone_number} is simulated due to trial account restrictions. Use the OTP code provided."
-                if not settings.DEBUG:  # Provide OTP in simulation cases even in production
-                    response_data['otp_code'] = user.otp_code
             return Response(response_data, status=status.HTTP_200_OK)
         else:
             return Response({
