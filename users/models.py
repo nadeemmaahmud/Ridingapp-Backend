@@ -49,6 +49,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     payment_method_choices = (
         ('credit_card', 'Credit Card'),
+        ('debit_card', 'Debit Card'),
         ('cash', 'Cash'),
     )
 
