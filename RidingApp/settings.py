@@ -14,6 +14,10 @@ DEBUG = False
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver', '12d7f61bfb2d.ngrok-free.app']
 CORS_ALLOWED_ORIGINS = ['https://12d7f61bfb2d.ngrok-free.app']
 
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
