@@ -166,8 +166,8 @@ class DriverSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'account_type', 'full_name', 'email', 'phone_number',
             'date_joined', 'profile_picture', 'is_verified',
-            'id_number', 'payment_method', 'driving_license_picture', 
-            'car_picture', 'car_name', 'plate_number'
+            'id_number', 'payment_method', 'driver_is_available',
+            'driving_license_picture', 'car_picture', 'car_name', 'plate_number'
         ]
         read_only_fields = ['id', 'date_joined', 'account_type', 'is_verified']
 
@@ -269,6 +269,11 @@ class SocialAuthRegisterSerializer(serializers.Serializer):
 
 class GoogleLoginSerializer(serializers.Serializer):
     access_token = serializers.CharField(required=True)
+    account_type = serializers.ChoiceField(
+        choices=[('user', 'User'), ('driver', 'Driver')],
+        required=False,
+        default='user'
+    )
     
     def validate_access_token(self, access_token):
         import requests

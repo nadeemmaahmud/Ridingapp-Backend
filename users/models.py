@@ -71,6 +71,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     id_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
     payment_method = models.CharField(max_length=50, blank=True, null=True, choices=payment_method_choices)
 
+    driver_is_available = models.BooleanField(default=True)
     driving_license_picture = models.ImageField(upload_to='driving_licenses/', blank=True, null=True)
     car_picture = models.ImageField(upload_to='car_pictures/', blank=True, null=True)
     car_name = models.CharField(max_length=100, blank=True, null=True)

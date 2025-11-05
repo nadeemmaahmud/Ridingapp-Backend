@@ -2,18 +2,19 @@ from django.db import models
 from users.models import CustomUser
 
 class RidingEvent(models.Model):
-    STATUS_CHOICES = [
+    STATUS_CHOICES = (
         ('pending', 'Pending'),
         ('in_progress', 'In Progress'),
         ('completed', 'Completed'),
         ('cancelled', 'Cancelled'),
-    ]
+    )
 
     user = models.ForeignKey(
         CustomUser, 
         on_delete=models.CASCADE, 
         related_name='user_events'
     )
+
     driver = models.ForeignKey(
         CustomUser, 
         on_delete=models.CASCADE, 
@@ -21,6 +22,7 @@ class RidingEvent(models.Model):
         blank=True, 
         related_name='driver_events'
     )
+
     from_where = models.CharField(max_length=100)
     to_where = models.CharField(max_length=100)
     distance_km = models.FloatField()
@@ -45,12 +47,12 @@ class RidingEvent(models.Model):
         return f"{self.from_where} to {self.to_where}"
 
 class StripePayment(models.Model):
-    STATUS_CHOICES = [
+    STATUS_CHOICES = (
         ('pending', 'Pending'),
         ('succeeded', 'Succeeded'),
         ('failed', 'Failed'),
         ('refunded', 'Refunded'),
-    ]
+    )
 
     riding_event = models.OneToOneField(
         RidingEvent, 

@@ -4,6 +4,7 @@ from .views import (
     UserRidingEventsView,
     RidingEventDetailView,
     CompletePaymentView,
+    AvailableDriversView,
 )
 from .stripe_views import (
     CreatePaymentIntentView,
@@ -17,6 +18,7 @@ urlpatterns = [
     path('my-events/', UserRidingEventsView.as_view(), name='user-riding-events'),
     path('event/<int:pk>/', RidingEventDetailView.as_view(), name='riding-event-detail'),
     path('event/<int:event_id>/complete-payment/', CompletePaymentView.as_view(), name='complete-payment'),
+    path('available-drivers/', AvailableDriversView.as_view(), name='available-drivers'),
     path('create-payment-intent/', CreatePaymentIntentView.as_view(), name='create-payment-intent'),
     path('confirm-payment/', ConfirmPaymentView.as_view(), name='confirm-payment'),
     path('test-payment/', TestPaymentView.as_view(), name='test-payment'),

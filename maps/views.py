@@ -20,6 +20,7 @@ from .stripe_utils import (
     construct_webhook_event
 )
 from users.models import CustomUser
+from users.serializers import DriverSerializer
 
 try:
     import googlemaps
@@ -39,6 +40,27 @@ def get_gmaps_client():
             gmaps_client = googlemaps.Client(key=key)
     return gmaps_client
 
+class AvailableDriversView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = DriverSerializer
+    
+    def get_queryset(self):
+        return CustomUser.objects.filter(
+            account_type='driver',
+            is_verified=True,
+            driver_is_available=True
+        )
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.serializer_class(queryset, many=True)
+        
+        return Response({
+            'message': 'Available drivers retrieved successfully',
+            'count': queryset.count(),
+            'drivers': serializer.data
+        }, status=status.HTTP_200_OK)
+
 class CreateRidingEventView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -56,6 +78,18 @@ class CreateRidingEventView(APIView):
         from_where = serializer.validated_data['from_where']
         to_where = serializer.validated_data['to_where']
         payment_method = serializer.validated_data['payment_method']
+
+        try:
+            driver = CustomUser.objects.get(id=driver_id)
+            
+            if not driver.driver_is_available:
+                return Response({
+                    'error': 'This driver is currently unavailable'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except CustomUser.DoesNotExist:
+            return Response({
+                'error': 'Driver not found'
+            }, status=status.HTTP_404_NOT_FOUND)
 
         client = get_gmaps_client()
         if not client:
@@ -95,7 +129,6 @@ class CreateRidingEventView(APIView):
 
             charge_amount = distance_km * 10.0
 
-            driver = CustomUser.objects.get(id=driver_id)
             riding_event = RidingEvent.objects.create(
                 user=request.user,
                 driver=driver,
@@ -107,6 +140,9 @@ class CreateRidingEventView(APIView):
                 payment_method=payment_method,
                 payment_completed=False
             )
+            
+            driver.driver_is_available = False
+            driver.save()
 
             event_serializer = RidingEventSerializer(riding_event)
             return Response({
@@ -163,10 +199,18 @@ class RidingEventDetailView(RetrieveUpdateAPIView):
                 'error': 'You do not have permission to edit this event'
             }, status=status.HTTP_403_FORBIDDEN)
         
+        old_status = instance.status
+        
         partial = kwargs.pop('partial', False)
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
+        
+        new_status = serializer.instance.status
+        if old_status != new_status and new_status in ['completed', 'cancelled']:
+            driver = instance.driver
+            driver.driver_is_available = True
+            driver.save()
         
         return Response({
             'message': 'Riding event updated successfully',
