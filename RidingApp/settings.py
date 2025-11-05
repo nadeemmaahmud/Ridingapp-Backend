@@ -9,10 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
-DEBUG = False
+DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver', '12d7f61bfb2d.ngrok-free.app']
-CORS_ALLOWED_ORIGINS = ['https://12d7f61bfb2d.ngrok-free.app']
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver', 'bbaedb1d7be1.ngrok-free.app']
+CORS_ALLOWED_ORIGINS = ['https://bbaedb1d7be1.ngrok-free.app']
 
 STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')

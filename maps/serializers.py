@@ -16,7 +16,6 @@ class StripePaymentSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
 
-
 class RidingEventSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.full_name', read_only=True)
     driver_name = serializers.CharField(source='driver.full_name', read_only=True)
@@ -39,8 +38,10 @@ class RidingEventSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        user = data.get('user')
-        driver = data.get('driver')
+        instance = getattr(self, 'instance', None)
+        
+        user = data.get('user', instance.user if instance else None)
+        driver = data.get('driver', instance.driver if instance else None)
         
         if user and driver and user.id == driver.id:
             raise serializers.ValidationError("User and driver cannot be the same person.")
@@ -60,21 +61,40 @@ class RidingEventSerializer(serializers.ModelSerializer):
         if data.get('charge_amount') and data['charge_amount'] < 0:
             raise serializers.ValidationError("Charge amount cannot be negative.")
         
+        if instance and instance.payment_completed:
+            restricted_fields = [
+                'user', 'driver', 'from_where', 'to_where', 
+                'distance_km', 'estimated_time_min', 'charge_amount', 
+                'payment_method', 'stripe_payment_intent_id'
+            ]
+            
+            for field in restricted_fields:
+                if field in data and data[field] != getattr(instance, field):
+                    raise serializers.ValidationError(
+                        f"Cannot modify '{field}' after payment is completed."
+                    )
+        
         return data
 
 class CreateRidingEventSerializer(serializers.Serializer):
+    driver_id = serializers.IntegerField(required=True)
     from_where = serializers.CharField(max_length=100, required=True)
     to_where = serializers.CharField(max_length=100, required=True)
-    payment_method = serializers.ChoiceField(
-        choices=['credit_card', 'debit_card', 'cash', 'stripe'],
-        required=True
-    )
+    payment_method = serializers.ChoiceField(choices=['cash', 'stripe'], required=True)
+    
+    def validate_driver_id(self, value):
+        try:
+            driver = CustomUser.objects.get(id=value)
+            if driver.account_type != 'driver':
+                raise serializers.ValidationError("The selected user is not a driver.")
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError("Driver not found.")
+        return value
     
     def validate(self, data):
         if data['from_where'] == data['to_where']:
             raise serializers.ValidationError("Origin and destination cannot be the same.")
         return data
-
 
 class CreatePaymentIntentSerializer(serializers.Serializer):
     riding_event_id = serializers.IntegerField(required=True)

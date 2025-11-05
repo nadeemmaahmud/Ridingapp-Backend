@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import RidingEvent, StripePayment
 from .serializers import CreatePaymentIntentSerializer, StripePaymentSerializer
-from .stripe_utils import create_payment_intent, confirm_payment_intent, construct_webhook_event
+from .stripe_utils import create_payment_intent, confirm_payment_intent, construct_webhook_event, confirm_payment_with_test_card
 
 
 class CreatePaymentIntentView(APIView):
@@ -31,11 +31,21 @@ class CreatePaymentIntentView(APIView):
 
             if hasattr(riding_event, 'stripe_payment'):
                 stripe_payment = riding_event.stripe_payment
-                if stripe_payment.status in ['succeeded', 'pending']:
+                if stripe_payment.status in ['succeeded']:
                     return Response({
-                        'error': 'Payment intent already exists for this event',
+                        'error': 'Payment already completed for this event',
                         'payment': StripePaymentSerializer(stripe_payment).data
                     }, status=status.HTTP_400_BAD_REQUEST)
+                elif stripe_payment.status == 'pending':
+                    return Response({
+                        'message': 'Payment intent already exists',
+                        'client_secret': stripe_payment.stripe_payment_intent_id,
+                        'payment_intent_id': stripe_payment.stripe_payment_intent_id,
+                        'amount': float(riding_event.charge_amount),
+                        'payment': StripePaymentSerializer(stripe_payment).data
+                    }, status=status.HTTP_200_OK)
+                else:
+                    stripe_payment.delete()
 
             metadata = {
                 'riding_event_id': str(riding_event.id),
@@ -118,16 +128,56 @@ class ConfirmPaymentView(APIView):
                     'status': payment_intent.status,
                     'payment': StripePaymentSerializer(stripe_payment).data
                 }, status=status.HTTP_200_OK)
-            else:
-                stripe_payment.status = 'failed'
-                stripe_payment.error_message = f"Payment status: {payment_intent.status}"
+            
+            elif payment_intent.status == 'requires_payment_method':
+                stripe_payment.status = 'pending'
+                stripe_payment.error_message = 'Awaiting payment method from client'
                 stripe_payment.save()
 
                 return Response({
-                    'message': 'Payment not yet completed',
+                    'message': 'Payment method required. Please complete payment on the client side.',
+                    'status': payment_intent.status,
+                    'client_secret': payment_intent.client_secret,
+                    'payment': StripePaymentSerializer(stripe_payment).data
+                }, status=status.HTTP_200_OK)
+            
+            elif payment_intent.status == 'processing':
+                stripe_payment.status = 'pending'
+                stripe_payment.error_message = 'Payment is being processed'
+                stripe_payment.save()
+
+                return Response({
+                    'message': 'Payment is being processed',
                     'status': payment_intent.status,
                     'payment': StripePaymentSerializer(stripe_payment).data
                 }, status=status.HTTP_200_OK)
+            
+            elif payment_intent.status in ['requires_action', 'requires_confirmation']:
+                stripe_payment.status = 'pending'
+                stripe_payment.error_message = f'Payment requires action: {payment_intent.status}'
+                stripe_payment.save()
+
+                return Response({
+                    'message': f'Payment requires additional action',
+                    'status': payment_intent.status,
+                    'client_secret': payment_intent.client_secret,
+                    'next_action': payment_intent.next_action if hasattr(payment_intent, 'next_action') else None,
+                    'payment': StripePaymentSerializer(stripe_payment).data
+                }, status=status.HTTP_200_OK)
+            
+            else:
+                stripe_payment.status = 'failed'
+                stripe_payment.error_message = f"Payment status: {payment_intent.status}"
+                if hasattr(payment_intent, 'last_payment_error') and payment_intent.last_payment_error:
+                    stripe_payment.error_message = payment_intent.last_payment_error.message
+                stripe_payment.save()
+
+                return Response({
+                    'message': 'Payment failed',
+                    'status': payment_intent.status,
+                    'error': stripe_payment.error_message,
+                    'payment': StripePaymentSerializer(stripe_payment).data
+                }, status=status.HTTP_400_BAD_REQUEST)
 
         except StripePayment.DoesNotExist:
             return Response({
@@ -151,10 +201,23 @@ class StripeWebhookView(APIView):
         if not webhook_secret:
             return HttpResponse('Webhook secret not configured', status=500)
 
-        try:
-            event = construct_webhook_event(payload, sig_header, webhook_secret)
-        except Exception as e:
-            return HttpResponse(f'Webhook error: {str(e)}', status=400)
+        if settings.DEBUG and not sig_header:
+            try:
+                import json
+                event = json.loads(payload)
+                class WebhookEvent:
+                    def __init__(self, data):
+                        self.type = data.get('type')
+                        self.data = type('obj', (object,), {'object': data.get('data', {}).get('object', {})})()
+                
+                event = WebhookEvent(event)
+            except Exception as e:
+                return HttpResponse(f'Webhook error parsing payload: {str(e)}', status=400)
+        else:
+            try:
+                event = construct_webhook_event(payload, sig_header, webhook_secret)
+            except Exception as e:
+                return HttpResponse(f'Webhook error: {str(e)}', status=400)
 
         if event.type == 'payment_intent.succeeded':
             payment_intent = event.data.object
@@ -214,3 +277,78 @@ class StripeWebhookView(APIView):
 
         except StripePayment.DoesNotExist:
             pass
+
+
+class TestPaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not settings.DEBUG:
+            return Response({
+                'error': 'This endpoint is only available in DEBUG mode'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        payment_intent_id = request.data.get('payment_intent_id')
+
+        if not payment_intent_id:
+            return Response({
+                'error': 'payment_intent_id is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            stripe_payment = StripePayment.objects.get(
+                stripe_payment_intent_id=payment_intent_id
+            )
+
+            if stripe_payment.riding_event.user != request.user:
+                return Response({
+                    'error': 'You do not have permission to test this payment'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            payment_intent = confirm_payment_with_test_card(payment_intent_id)
+
+            if payment_intent.status == 'succeeded':
+                stripe_payment.status = 'succeeded'
+                
+                if hasattr(payment_intent, 'charges') and payment_intent.charges and hasattr(payment_intent.charges, 'data'):
+                    if len(payment_intent.charges.data) > 0:
+                        stripe_payment.stripe_charge_id = payment_intent.charges.data[0].id
+                elif hasattr(payment_intent, 'latest_charge') and payment_intent.latest_charge:
+                    stripe_payment.stripe_charge_id = payment_intent.latest_charge
+                
+                stripe_payment.save()
+
+                riding_event = stripe_payment.riding_event
+                riding_event.payment_completed = True
+                riding_event.status = 'in_progress'
+                riding_event.save()
+
+                return Response({
+                    'message': 'Test payment completed successfully',
+                    'status': payment_intent.status,
+                    'payment': StripePaymentSerializer(stripe_payment).data,
+                    'riding_event': {
+                        'id': riding_event.id,
+                        'status': riding_event.status,
+                        'payment_completed': riding_event.payment_completed
+                    }
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'message': 'Payment processing',
+                    'status': payment_intent.status,
+                    'payment': StripePaymentSerializer(stripe_payment).data
+                }, status=status.HTTP_200_OK)
+
+        except StripePayment.DoesNotExist:
+            return Response({
+                'error': 'Payment record not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            import traceback
+            error_details = {
+                'error': f'Failed to complete test payment: {str(e)}',
+                'error_type': type(e).__name__,
+                'traceback': traceback.format_exc()
+            }
+            return Response(error_details, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -6,7 +6,7 @@ from django.utils.decorators import method_decorator
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, RetrieveUpdateAPIView
 from .models import RidingEvent, StripePayment
 from .serializers import (
     RidingEventSerializer, 
@@ -131,7 +131,7 @@ class UserRidingEventsView(ListAPIView):
             return RidingEvent.objects.filter(driver=user).order_by('-created_at')
         return RidingEvent.objects.none()
 
-class RidingEventDetailView(RetrieveAPIView):
+class RidingEventDetailView(RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = RidingEventSerializer
     queryset = RidingEvent.objects.all()
@@ -143,6 +143,35 @@ class RidingEventDetailView(RetrieveAPIView):
         elif user.account_type == 'driver':
             return RidingEvent.objects.filter(driver=user)
         return RidingEvent.objects.none()
+    
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        
+        if instance.payment_completed:
+            allowed_fields = {'status'}
+            if not set(request.data.keys()).issubset(allowed_fields):
+                return Response({
+                    'error': 'Cannot edit event details after payment is completed. Only status can be updated.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if request.user.account_type == 'user' and instance.user != request.user:
+            return Response({
+                'error': 'You do not have permission to edit this event'
+            }, status=status.HTTP_403_FORBIDDEN)
+        elif request.user.account_type == 'driver' and instance.driver != request.user:
+            return Response({
+                'error': 'You do not have permission to edit this event'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        partial = kwargs.pop('partial', False)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        return Response({
+            'message': 'Riding event updated successfully',
+            'event': serializer.data
+        }, status=status.HTTP_200_OK)
 
 class CompletePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
