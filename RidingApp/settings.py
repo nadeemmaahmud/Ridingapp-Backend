@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.google',
     'allauth.socialaccount.providers.facebook',
     'maps',
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -124,7 +125,8 @@ AUTHENTICATION_BACKENDS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'users.authentication.CustomJWTAuthentication',
-    )
+    ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 REST_AUTH = {
@@ -202,4 +204,33 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_VERIFY_SERVICE_SID = os.environ.get('TWILIO_VERIFY_SERVICE_SID')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Riding App API',
+    'DESCRIPTION': 'API documentation for the Riding App - A ride booking platform with user authentication, driver management, and Stripe payment integration',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': r'/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+        'filter': True,
+    },
+    'SECURITY': [
+        {
+            'jwtAuth': []
+        }
+    ],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'jwtAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
+}
 DISABLE_SMS = os.environ.get('DISABLE_SMS', 'False').lower() == 'true'

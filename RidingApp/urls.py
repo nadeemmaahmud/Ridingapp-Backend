@@ -5,6 +5,7 @@ from django.http import FileResponse
 import os
 from django.conf import settings
 from django.conf.urls.static import static
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
 def serve_template(request, template_name):
     template_path = os.path.join(settings.BASE_DIR, 'templates', template_name)
@@ -18,5 +19,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users.urls')),
     path('api/maps/', include('maps.urls')),
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     path('templates/<str:template_name>', serve_template, name='serve_template'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
