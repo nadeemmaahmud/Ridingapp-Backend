@@ -8,6 +8,48 @@ class RidingEventAdmin(admin.ModelAdmin):
     search_fields = ['user__full_name', 'driver__full_name', 'from_where', 'to_where', 'stripe_payment_intent_id']
     readonly_fields = ['created_at', 'stripe_payment_intent_id']
     ordering = ['-created_at']
+    list_editable = ['status']
+    fieldsets = (
+        ('Event Details', {
+            'fields': ('user', 'driver', 'from_where', 'to_where')
+        }),
+        ('Trip Information', {
+            'fields': ('distance_km', 'estimated_time_min', 'charge_amount')
+        }),
+        ('Payment Information', {
+            'fields': ('payment_method', 'payment_completed', 'stripe_payment_intent_id')
+        }),
+        ('Status', {
+            'fields': ('status',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at',)
+        }),
+    )
+    actions = ['mark_completed', 'mark_cancelled', 'mark_in_progress']
+    
+    def mark_completed(self, request, queryset):
+        updated = queryset.update(status='completed')
+        for event in queryset:
+            if event.driver:
+                event.driver.driver_is_available = True
+                event.driver.save()
+        self.message_user(request, f'{updated} events marked as completed.')
+    mark_completed.short_description = "Mark selected events as completed"
+    
+    def mark_cancelled(self, request, queryset):
+        updated = queryset.update(status='cancelled')
+        for event in queryset:
+            if event.driver:
+                event.driver.driver_is_available = True
+                event.driver.save()
+        self.message_user(request, f'{updated} events marked as cancelled.')
+    mark_cancelled.short_description = "Mark selected events as cancelled"
+    
+    def mark_in_progress(self, request, queryset):
+        updated = queryset.update(status='in_progress')
+        self.message_user(request, f'{updated} events marked as in progress.')
+    mark_in_progress.short_description = "Mark selected events as in progress"
 
 
 @admin.register(StripePayment)

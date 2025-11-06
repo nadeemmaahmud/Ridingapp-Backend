@@ -52,7 +52,7 @@ class CustomUserChangeForm(UserChangeForm):
         model = CustomUser
         fields = ('email', 'phone_number', 'full_name', 'account_type', 
                  'is_verified', 'is_staff', 'profile_picture', 
-                 'id_number', 'payment_method', 'driving_license_picture', 
+                 'id_number', 'payment_method', 'driver_is_available', 'driving_license_picture', 
                  'car_picture', 'car_name', 'plate_number')
 
 class CustomUserAdmin(UserAdmin):
@@ -62,11 +62,11 @@ class CustomUserAdmin(UserAdmin):
     
     list_display = (
         'username', 'email', 'phone_number', 'full_name', 
-        'account_type', 'is_verified', 'is_staff', 'date_joined'
+        'account_type', 'is_verified', 'driver_is_available', 'is_staff', 'date_joined'
     )
     
     list_filter = (
-        'account_type', 'is_verified', 'is_staff', 'date_joined'
+        'account_type', 'is_verified', 'driver_is_available', 'is_staff', 'date_joined'
     )
     
     search_fields = ('username', 'email', 'phone_number', 'full_name')
@@ -86,7 +86,7 @@ class CustomUserAdmin(UserAdmin):
             'fields': ('payment_method',)
         }),
         ('Driver Info', {
-            'fields': ('driving_license_picture', 'car_picture', 'car_name', 'plate_number')
+            'fields': ('driver_is_available', 'driving_license_picture', 'car_picture', 'car_name', 'plate_number')
         }),
         ('Permissions', {
             'fields': ('is_verified', 'is_staff')
@@ -106,7 +106,7 @@ class CustomUserAdmin(UserAdmin):
         }),
     )
     
-    actions = ['verify_users', 'unverify_users']
+    actions = ['verify_users', 'unverify_users', 'make_drivers_available', 'make_drivers_unavailable']
     
     def verify_users(self, request, queryset):
         updated = queryset.update(is_verified=True)
@@ -117,6 +117,16 @@ class CustomUserAdmin(UserAdmin):
         updated = queryset.update(is_verified=False)
         self.message_user(request, f'{updated} users have been unverified.')
     unverify_users.short_description = "Unverify selected users"
+    
+    def make_drivers_available(self, request, queryset):
+        updated = queryset.filter(account_type='driver').update(driver_is_available=True)
+        self.message_user(request, f'{updated} drivers have been marked as available.')
+    make_drivers_available.short_description = "Mark selected drivers as available"
+    
+    def make_drivers_unavailable(self, request, queryset):
+        updated = queryset.filter(account_type='driver').update(driver_is_available=False)
+        self.message_user(request, f'{updated} drivers have been marked as unavailable.')
+    make_drivers_unavailable.short_description = "Mark selected drivers as unavailable"
     
     def get_email_or_phone(self, obj):
         return obj.email or obj.phone_number

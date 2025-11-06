@@ -3,7 +3,6 @@ from users.models import CustomUser
 
 class RidingEvent(models.Model):
     STATUS_CHOICES = (
-        ('pending', 'Pending'),
         ('in_progress', 'In Progress'),
         ('completed', 'Completed'),
         ('cancelled', 'Cancelled'),
@@ -34,7 +33,7 @@ class RidingEvent(models.Model):
     status = models.CharField(
         max_length=20, 
         choices=STATUS_CHOICES, 
-        default='pending', 
+        default='in_progress', 
         null=True, 
         blank=True
     )

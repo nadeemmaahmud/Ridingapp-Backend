@@ -11,14 +11,15 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver', 'bbaedb1d7be1.ngrok-free.app']
-CORS_ALLOWED_ORIGINS = ['https://bbaedb1d7be1.ngrok-free.app']
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver', 'bfaa75c6829a.ngrok-free.app']
+CORS_ALLOWED_ORIGINS = ['https://bfaa75c6829a.ngrok-free.app']
 
 STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
 
 INSTALLED_APPS = [
+    'daphne',  # Must be first for channels
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -41,6 +42,8 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.facebook',
     'maps',
     'drf_spectacular',
+    'channels',
+    'chat',
 ]
 
 MIDDLEWARE = [
@@ -73,6 +76,17 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'RidingApp.wsgi.application'
+ASGI_APPLICATION = 'RidingApp.asgi.application'
+
+# Channel layers configuration for WebSocket support
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 DATABASES = {
     'default': {

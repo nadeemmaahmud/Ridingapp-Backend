@@ -120,8 +120,13 @@ class ConfirmPaymentView(APIView):
 
                 riding_event = stripe_payment.riding_event
                 riding_event.payment_completed = True
-                riding_event.status = 'in_progress'
+                riding_event.status = 'completed'
                 riding_event.save()
+                
+                driver = riding_event.driver
+                if driver:
+                    driver.driver_is_available = True
+                    driver.save()
 
                 return Response({
                     'message': 'Payment confirmed successfully',
@@ -244,8 +249,13 @@ class StripeWebhookView(APIView):
 
             riding_event = stripe_payment.riding_event
             riding_event.payment_completed = True
-            riding_event.status = 'in_progress'
+            riding_event.status = 'completed'
             riding_event.save()
+            
+            driver = riding_event.driver
+            if driver:
+                driver.driver_is_available = True
+                driver.save()
 
         except StripePayment.DoesNotExist:
             pass
@@ -320,8 +330,13 @@ class TestPaymentView(APIView):
 
                 riding_event = stripe_payment.riding_event
                 riding_event.payment_completed = True
-                riding_event.status = 'in_progress'
+                riding_event.status = 'completed'
                 riding_event.save()
+                
+                driver = riding_event.driver
+                if driver:
+                    driver.driver_is_available = True
+                    driver.save()
 
                 return Response({
                     'message': 'Test payment completed successfully',
